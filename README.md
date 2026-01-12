@@ -407,3 +407,73 @@ Improvements welcome! Key areas:
 ## License
 
 MIT
+
+## Documentation Index
+
+This repository includes comprehensive documentation:
+
+- **[QUICK_START.md](QUICK_START.md)** - Get started in 5 minutes ⚡
+- **[INSTALL.md](INSTALL.md)** - Detailed installation guide 📦
+- **[EXAMPLES.md](EXAMPLES.md)** - Real-world usage scenarios 📚
+- **[COMPLETION.md](COMPLETION.md)** - Shell completion setup 🎯
+- **[CLAUDE.md](CLAUDE.md)** - AI development guidelines 🤖
+
+## Validation and Testing
+
+- **[check_prereqs.sh](check_prereqs.sh)** - Verify system requirements ✓
+- **[test_scripts.sh](test_scripts.sh)** - Automated script testing 🧪
+
+## Quick Links
+
+| I want to... | Go to... |
+|--------------|----------|
+| Get started immediately | [QUICK_START.md](QUICK_START.md) |
+| Install step-by-step | [INSTALL.md](INSTALL.md) |
+| See usage examples | [EXAMPLES.md](EXAMPLES.md) |
+| Enable tab completion | [COMPLETION.md](COMPLETION.md) |
+| Check my setup | Run `./check_prereqs.sh` |
+| Understand the code | Read this README |
+
+## File Structure
+
+```
+.
+├── cft                    # Main script - creates worktree + starts Claude
+├── cftr                   # Cleanup script - removes worktree + branch
+├── CLAUDE.md              # Template for AI development guidelines
+├── README.md              # Comprehensive documentation (this file)
+├── QUICK_START.md         # 5-minute getting started guide
+├── INSTALL.md             # Detailed installation instructions
+├── EXAMPLES.md            # Real-world usage examples
+├── COMPLETION.md          # Shell completion setup guide
+├── check_prereqs.sh       # Prerequisites verification script
+├── test_scripts.sh        # Automated testing script
+├── completions.zsh        # Zsh completion definitions
+└── completions.bash       # Bash completion definitions
+```
+
+## Contributing
+
+Found a bug? Have an improvement? Contributions welcome!
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b improve-feature`
+3. Make your changes
+4. Test thoroughly: `./test_scripts.sh`
+5. Commit: `git commit -am 'Add improvement'`
+6. Push: `git push origin improve-feature`
+7. Create a Pull Request
+
+## License
+
+[Add your license here]
+
+## Acknowledgments
+
+- Inspired by the `ft`/`ftr` git worktree workflow
+- Powered by Claude AI for autonomous development
+- Built for developers who love automation
+
+---
+
+**Made with ❤️ for developers who want to code faster**
