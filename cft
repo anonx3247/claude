@@ -28,6 +28,9 @@ cd "$project_dir"
 feature_path="../${project}-${feature_name}"
 prompt_file="/tmp/claude-prompt-${feature_name}.md"
 
+# Ensure cleanup on exit
+trap 'rm -f "$prompt_file"' EXIT
+
 # Check if branch exists, create only if it doesn't
 if ! git show-ref --verify --quiet refs/heads/"$feature_name"; then
   echo "Creating branch: $feature_name"
@@ -130,15 +133,46 @@ echo ""
 # Navigate to the worktree and start Claude
 cd "$feature_path"
 
-# Start Claude with the task instructions
-# Using claude CLI with allow all tools and the task as context
 echo "Starting Claude session with all tools enabled..."
 echo ""
 
-# Check if claude CLI is available
+# Check if claude CLI is available and determine correct flags
 if command -v claude &> /dev/null; then
-  # Start Claude with the task file as context
-  claude --allow-all-tools --context TASK.md --context CLAUDE.md
+  # Create initial prompt for Claude
+  initial_prompt="You are working in a git worktree for branch '$feature_name'.
+
+Read TASK.md and CLAUDE.md to understand your task and guidelines.
+Then execute the workflow to complete the task and create a pull request.
+
+Start by reading both files to understand what needs to be done."
+  
+  # Try to detect correct Claude CLI syntax
+  # Different Claude CLI implementations may use different flags
+  claude_help=$(claude --help 2>&1 || claude -h 2>&1 || echo "")
+  
+  if echo "$claude_help" | grep -q "allow-all-tools"; then
+    # Standard --allow-all-tools flag
+    echo "$initial_prompt" | claude --allow-all-tools
+  elif echo "$claude_help" | grep -q "\-allow"; then
+    # Alternative -allow all syntax
+    echo "$initial_prompt" | claude -allow all
+  else
+    # Fallback: try both, use first that works
+    echo "Note: Attempting to determine correct Claude CLI flags..."
+    if echo "$initial_prompt" | claude --allow-all-tools 2>/dev/null; then
+      : # Success with --allow-all-tools
+    elif echo "$initial_prompt" | claude -allow all 2>/dev/null; then
+      : # Success with -allow all
+    else
+      echo "Warning: Could not determine correct Claude CLI flags"
+      echo "Please run Claude manually with appropriate flags"
+      echo ""
+      echo "Suggested commands:"
+      echo "  cd $feature_path"
+      echo "  claude --allow-all-tools  # or"
+      echo "  claude -allow all"
+    fi
+  fi
 else
   echo "Warning: 'claude' CLI not found in PATH"
   echo "Please ensure Claude CLI is installed and available"
@@ -149,6 +183,3 @@ else
   echo ""
   echo "You can manually start Claude or open the directory in your preferred editor"
 fi
-
-# Cleanup
-rm -f "$prompt_file"
