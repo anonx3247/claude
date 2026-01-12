@@ -2,22 +2,32 @@
 
 # cft - Claude Feature Tool
 # Creates a git worktree with Claude AI integration for autonomous development
-# Usage: cft <branch-name>
+# Usage: cft <branch-name> [--non-interactive "prompt"]
 
 set -euo pipefail
 
 # Check if branch name is provided
 if [ $# -eq 0 ]; then
-  echo "Usage: cft <branch-name>"
+  echo "Usage: cft <branch-name> [--non-interactive \"prompt\"]"
   echo ""
   echo "Examples:"
   echo "  cft add-user-authentication"
   echo "  cft fix/memory-leak-in-parser"
-  echo "  cft feature/search-integration"
+  echo "  cft feature/search --non-interactive \"Add search feature\""
   exit 1
 fi
 
 feature_name="$1"
+shift
+
+# Check for non-interactive mode
+non_interactive=false
+preset_prompt=""
+if [ "${1:-}" = "--non-interactive" ]; then
+  non_interactive=true
+  shift
+  preset_prompt="$*"
+fi
 
 # Validate we're in a git repository
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -58,8 +68,14 @@ else
   echo "  Using existing worktree."
 fi
 
-# Create prompt template for user input
-cat > "$prompt_file" << TEMPLATE_EOF
+# Get task instructions
+if [ "$non_interactive" = true ]; then
+  # Non-interactive mode
+  task_description="$preset_prompt"
+  echo "✓ Using non-interactive mode"
+else
+  # Interactive mode - open editor
+  cat > "$prompt_file" << TEMPLATE_EOF
 # Claude Task Instructions for: $feature_name
 
 ## Task Description
@@ -73,62 +89,53 @@ automatically infer the task from the branch name.
 [Write your instructions here]
 
 ## Examples of good instructions:
-- "Add JWT-based authentication with bcrypt password hashing and refresh tokens"
-- "Fix the memory leak in the image processing pipeline by properly disposing resources"
-- "Refactor the API client to use async/await and add retry logic with exponential backoff"
-
-## Tips:
-- Be specific about requirements and constraints
-- Mention any libraries or patterns to use
-- Include testing requirements
-- Reference existing code to follow as examples
+- "Add JWT-based authentication with bcrypt password hashing"
+- "Fix the memory leak in the image processing pipeline"
+- "Refactor the API client to use async/await with retry logic"
 
 TEMPLATE_EOF
 
-# Determine editor to use (respect EDITOR env var, default to hx)
-EDITOR_CMD="${EDITOR:-hx}"
-
-# Open editor for user to write instructions
-echo ""
-echo "Opening editor for task instructions..."
-echo "Save and close when done."
-echo ""
-
-if ! command -v "$EDITOR_CMD" &> /dev/null; then
-  echo "Warning: Editor '$EDITOR_CMD' not found."
-  echo "Trying fallback editors..."
+  # Determine editor to use
+  EDITOR_CMD="${EDITOR:-hx}"
   
-  for editor in hx helix nvim vim nano; do
-    if command -v "$editor" &> /dev/null; then
-      EDITOR_CMD="$editor"
-      echo "Using: $editor"
-      break
-    fi
-  done
-fi
+  if ! command -v "$EDITOR_CMD" &> /dev/null; then
+    echo "Warning: Editor '$EDITOR_CMD' not found."
+    echo "Trying fallback editors..."
+    
+    for editor in hx helix nvim vim nano; do
+      if command -v "$editor" &> /dev/null; then
+        EDITOR_CMD="$editor"
+        echo "Using: $editor"
+        break
+      fi
+    done
+  fi
 
-"$EDITOR_CMD" "$prompt_file"
-
-# Extract user instructions (remove template lines)
-user_prompt=$(grep -v '^#' "$prompt_file" | \
-              grep -v '^\[' | \
-              grep -v '^$' | \
-              grep -v 'Examples of good instructions:' | \
-              grep -v 'Tips:' | \
-              sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
-# Determine the prompt to use
-if [ -z "$user_prompt" ]; then
-  echo "✓ No custom instructions provided"
-  echo "  Claude will infer the task from branch name: $feature_name"
+  echo ""
+  echo "Opening editor for task instructions..."
+  echo "Save and close when done."
+  echo ""
   
-  task_description="Please work on the task indicated by the branch name: $feature_name
+  "$EDITOR_CMD" "$prompt_file"
+
+  # Extract user instructions
+  user_prompt=$(grep -v '^#' "$prompt_file" | \
+                grep -v '^\[' | \
+                grep -v '^$' | \
+                grep -v 'Examples of good instructions:' | \
+                sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+  if [ -z "$user_prompt" ]; then
+    echo "✓ No custom instructions provided"
+    echo "  Claude will infer from branch name: $feature_name"
+    task_description="Please work on the task indicated by the branch name: $feature_name
 
 Analyze the repository to understand the context, plan your approach, 
 implement the solution following best practices, and create a pull request when complete."
-else
-  echo "✓ Custom instructions captured"
-  task_description="$user_prompt"
+  else
+    echo "✓ Custom instructions captured"
+    task_description="$user_prompt"
+  fi
 fi
 
 # Copy CLAUDE.md to worktree if it exists
@@ -165,20 +172,11 @@ $task_description
 - Run linters and type checkers before committing
 - Aim for high test coverage (80%+)
 - Document non-obvious decisions
-
-## Success Criteria
-
-- All tests pass
-- Code follows project standards
-- No linter warnings
-- Type checking passes
-- PR is ready for review
-
 TASKEOF
 
 echo "✓ Created TASK.md with task instructions"
 
-# Create a helper script for running Claude
+# Create helper script for running Claude
 cat > "$feature_path/.run-claude.sh" << 'RUNSCRIPT'
 #!/bin/bash
 # Helper script to run Claude in this worktree
@@ -191,8 +189,6 @@ echo "=========================================="
 echo ""
 echo "Branch: $(git branch --show-current)"
 echo "Directory: $(pwd)"
-echo ""
-echo "Starting Claude with all tools enabled..."
 echo ""
 
 # Create initial context for Claude
@@ -210,6 +206,9 @@ Start by reading TASK.md and CLAUDE.md."
 
 # Try to invoke Claude CLI with appropriate flags
 if command -v claude &> /dev/null; then
+  echo "Starting Claude with all tools enabled..."
+  echo ""
+  
   # Check which flag format Claude CLI supports
   if claude --help 2>&1 | grep -q '\-\-allow-all-tools'; then
     echo "$INITIAL_PROMPT" | claude --allow-all-tools
@@ -217,15 +216,15 @@ if command -v claude &> /dev/null; then
     echo "$INITIAL_PROMPT" | claude -allow all
   else
     echo "Warning: Could not determine Claude CLI flags"
-    echo "Try running manually with:"
-    echo "  echo \"$INITIAL_PROMPT\" | claude --allow-all-tools"
+    echo "Trying with standard flags..."
+    echo "$INITIAL_PROMPT" | claude --allow-all-tools || echo "$INITIAL_PROMPT" | claude -allow all
   fi
 else
   echo "Error: 'claude' CLI not found"
   echo ""
   echo "To use Claude:"
   echo "1. Install Claude CLI and ensure it's in your PATH"
-  echo "2. Run: ./run-claude.sh"
+  echo "2. Run: ./.run-claude.sh"
   echo ""
   echo "Or start Claude manually with these files as context:"
   echo "  - TASK.md (your task)"
@@ -243,27 +242,37 @@ echo ""
 echo "Worktree location: $feature_path"
 echo "Branch: $feature_name"
 echo ""
-echo "Next steps:"
-echo "  1. cd $feature_path"
-echo "  2. cat TASK.md              # Review your task"
-echo "  3. ./.run-claude.sh         # Start Claude session"
-echo ""
-echo "Or manually start Claude with:"
-echo "  cd $feature_path"
-echo "  claude --allow-all-tools    # (or claude -allow all)"
-echo ""
-echo "To clean up later:"
-echo "  cftr $feature_name"
+echo "Files created:"
+echo "  - TASK.md (your task description)"
+echo "  - .run-claude.sh (helper to start Claude)"
+if [ -f "$project_dir/CLAUDE.md" ]; then
+  echo "  - CLAUDE.md (project guidelines)"
+fi
 echo ""
 
 # Navigate to worktree
 cd "$feature_path"
 
-# Ask if user wants to start Claude now
-echo "Would you like to start Claude now? (y/N): "
-read -r response
+if [ "$non_interactive" = false ]; then
+  # Ask if user wants to start Claude now
+  echo "Start Claude now? (Y/n): "
+  read -r response
 
-if [[ "$response" =~ ^[Yy]$ ]]; then
+  if [[ ! "$response" =~ ^[Nn]$ ]]; then
+    echo ""
+    exec ./.run-claude.sh
+  else
+    echo ""
+    echo "To start Claude later:"
+    echo "  cd $feature_path"
+    echo "  ./.run-claude.sh"
+    echo ""
+    echo "To clean up:"
+    echo "  cftr $feature_name"
+    echo ""
+  fi
+else
+  echo "Non-interactive mode: Claude not started automatically."
+  echo "To start Claude: cd $feature_path && ./.run-claude.sh"
   echo ""
-  exec ./.run-claude.sh
 fi

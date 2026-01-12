@@ -1,24 +1,31 @@
 #!/bin/bash
 
 # cftr - Claude Feature Tool Remove
-# Removes git worktree and optionally deletes the branch created by cft
-# Usage: cftr <branch-name>
+# Removes git worktree and branch created by cft
+# Usage: cftr <branch-name> [--confirm]
 
 set -euo pipefail
 
 # Check if branch name is provided
 if [ $# -eq 0 ]; then
-  echo "Usage: cftr <branch-name>"
+  echo "Usage: cftr <branch-name> [--confirm]"
   echo ""
-  echo "Removes the worktree and optionally deletes the branch."
+  echo "Removes the worktree and deletes the branch."
+  echo "Use --confirm for interactive confirmation prompts."
   echo ""
   echo "Examples:"
   echo "  cftr add-user-authentication"
-  echo "  cftr fix/memory-leak-in-parser"
+  echo "  cftr fix/memory-leak --confirm"
   exit 1
 fi
 
 feature_name="$1"
+confirm_mode=false
+
+# Check for --confirm flag
+if [ "${2:-}" = "--confirm" ] || [ "${2:-}" = "-c" ]; then
+  confirm_mode=true
+fi
 
 # Validate we're in a git repository
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -39,15 +46,12 @@ echo ""
 
 # Check if worktree exists and remove it
 if [ -d "$feature_path" ]; then
-  echo "Removing worktree at: $feature_path"
-  
-  # Check if there are uncommitted changes
-  if git -C "$feature_path" status --porcelain | grep -q .; then
-    echo ""
+  # Check for uncommitted changes
+  if [ "$confirm_mode" = true ] && git -C "$feature_path" status --porcelain | grep -q .; then
     echo "⚠ Warning: Worktree has uncommitted changes"
     git -C "$feature_path" status --short
     echo ""
-    echo "Do you want to continue removing? (y/N): "
+    echo "Continue removing? (y/N): "
     read -r response
     
     if [[ ! "$response" =~ ^[Yy]$ ]]; then
@@ -56,61 +60,73 @@ if [ -d "$feature_path" ]; then
     fi
   fi
   
+  echo "Removing worktree at: $feature_path"
   git worktree remove "$feature_path" --force
   echo "✓ Worktree removed"
 else
   echo "⚠ Worktree not found at: $feature_path"
 fi
 
-# Check if branch exists and offer to delete it
-if git show-ref --verify --quiet "refs/heads/$feature_name"; then
-  echo ""
-  echo "Branch '$feature_name' still exists."
-  
-  # Check if we're currently on this branch
-  current_branch=$(git branch --show-current)
-  if [ "$current_branch" = "$feature_name" ]; then
-    echo "⚠ You are currently on this branch."
-    echo "  Switching to main first..."
+# Check if we're currently on the branch we're trying to delete
+current_branch=$(git branch --show-current)
+if [ "$current_branch" = "$feature_name" ]; then
+  echo "Switching away from branch..."
+  # Try main, then master, then any other branch
+  if git show-ref --verify --quiet refs/heads/main; then
     git checkout main
-    echo "✓ Switched to main"
-  fi
-  
-  # Check if branch has been merged
-  if git branch --merged main | grep -q "^[* ]*$feature_name$"; then
-    echo ""
-    echo "Branch has been merged into main."
-    echo "Delete the branch? (Y/n): "
+  elif git show-ref --verify --quiet refs/heads/master; then
+    git checkout master
   else
-    echo ""
-    echo "⚠ Branch has NOT been merged into main."
-    echo "  This branch may contain work you want to keep."
-    git log --oneline main.."$feature_name" | head -5
-    if [ $(git rev-list --count main.."$feature_name") -gt 5 ]; then
-      echo "  ... and more commits"
-    fi
-    echo ""
-    echo "Delete the branch anyway? (y/N): "
-  fi
-  
-  read -r response
-  
-  # Default to 'y' for merged branches, 'n' for unmerged
-  if git branch --merged main | grep -q "^[* ]*$feature_name$"; then
-    # Merged - default yes
-    if [[ "$response" =~ ^[Nn]$ ]]; then
-      echo "✓ Branch kept: $feature_name"
+    other_branch=$(git branch | grep -v "^\*" | grep -v "$feature_name" | head -1 | xargs)
+    if [ -n "$other_branch" ]; then
+      git checkout "$other_branch"
     else
+      echo "Error: No other branch to switch to"
+      exit 1
+    fi
+  fi
+  echo "✓ Switched away from $feature_name"
+fi
+
+# Check if branch exists and delete it
+if git show-ref --verify --quiet "refs/heads/$feature_name"; then
+  if [ "$confirm_mode" = true ]; then
+    # Check if branch has been merged
+    if git branch --merged main 2>/dev/null | grep -q "^[* ]*$feature_name$" || \
+       git branch --merged master 2>/dev/null | grep -q "^[* ]*$feature_name$"; then
+      echo ""
+      echo "Branch has been merged."
+      echo "Delete the branch? (Y/n): "
+      read -r response
+      if [[ "$response" =~ ^[Nn]$ ]]; then
+        echo "✓ Branch kept: $feature_name"
+        exit 0
+      fi
       git branch -d "$feature_name"
       echo "✓ Branch deleted"
+    else
+      echo ""
+      echo "⚠ Branch has NOT been merged."
+      git log --oneline main.."$feature_name" 2>/dev/null | head -5 || \
+        git log --oneline master.."$feature_name" 2>/dev/null | head -5
+      echo ""
+      echo "Delete anyway? (y/N): "
+      read -r response
+      if [[ "$response" =~ ^[Yy]$ ]]; then
+        git branch -D "$feature_name"
+        echo "✓ Branch force-deleted"
+      else
+        echo "✓ Branch kept: $feature_name"
+      fi
     fi
   else
-    # Not merged - default no
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-      git branch -D "$feature_name"
-      echo "✓ Branch force-deleted"
+    # Non-interactive mode: just delete the branch
+    # Try normal delete first, then force if needed
+    if git branch -d "$feature_name" 2>/dev/null; then
+      echo "✓ Branch deleted: $feature_name"
     else
-      echo "✓ Branch kept: $feature_name"
+      git branch -D "$feature_name"
+      echo "✓ Branch force-deleted: $feature_name"
     fi
   fi
 else
@@ -121,8 +137,5 @@ fi
 rm -f "/tmp/claude-prompt-${feature_name}"-*.md
 
 echo ""
-echo "=========================================="
-echo "✓ Cleanup Complete!"
-echo "=========================================="
+echo "✓ Cleanup complete!"
 echo ""
-
