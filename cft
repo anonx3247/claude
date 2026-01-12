@@ -13,6 +13,12 @@ fi
 
 feature_name="$1"
 
+# Validate we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "Error: Not in a git repository"
+  exit 1
+fi
+
 # Get project directory and name
 project_dir=$(git rev-parse --show-toplevel)
 project=$(basename "$project_dir")
@@ -39,24 +45,48 @@ else
 fi
 
 # Create a temporary file for the prompt
-echo "# Claude Instructions for: $feature_name" > "$prompt_file"
-echo "" >> "$prompt_file"
-echo "## Task Description" >> "$prompt_file"
-echo "# Write your instructions below. If left empty, Claude will infer the task from the branch name." >> "$prompt_file"
-echo "" >> "$prompt_file"
-echo "## Instructions" >> "$prompt_file"
-echo "" >> "$prompt_file"
+cat > "$prompt_file" << 'TEMPLATE_EOF'
+# Claude Instructions
+
+## Branch
+BRANCH_NAME
+
+## Task Description
+Write your specific task instructions below. Be as detailed as needed.
+If you leave this empty (delete these lines), Claude will infer 
+the task from the branch name.
+
+## Instructions
+
+[Your instructions here]
+
+Examples:
+- "Add user authentication with JWT tokens and bcrypt password hashing"
+- "Fix the memory leak in the image processing module"
+- "Refactor the API client to use async/await pattern"
+
+TEMPLATE_EOF
+
+# Replace placeholder with actual branch name
+sed -i "s/BRANCH_NAME/$feature_name/" "$prompt_file" 2>/dev/null || sed -i '' "s/BRANCH_NAME/$feature_name/" "$prompt_file"
 
 # Open editor for user to write prompt
+echo ""
 echo "Opening editor for instructions..."
+echo "Save and close when done."
+echo ""
 ${EDITOR:-hx} "$prompt_file"
 
 # Read the prompt (skip header lines and extract actual content)
-user_prompt=$(sed -n '/^## Instructions/,${p}' "$prompt_file" | sed '1d' | sed '/^#/d' | sed '/^$/d')
+user_prompt=$(grep -v '^#' "$prompt_file" | grep -v '^\[' | grep -v '^Examples:' | sed '/^$/d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
 # If prompt is empty, use branch name as context
 if [ -z "$user_prompt" ]; then
+  echo "No specific instructions provided."
+  echo "Claude will infer the task from branch name: $feature_name"
   user_prompt="Please work on the task indicated by the branch name: $feature_name. Explore the repository, understand the requirements, plan your approach, and implement a solution. Create a pull request when complete."
+else
+  echo "Task instructions captured."
 fi
 
 # Copy CLAUDE.md to worktree if it exists
@@ -90,12 +120,11 @@ $user_prompt
 - Aim for 80%+ code coverage
 TASKEOF
 
-echo ""
 echo "Created TASK.md in worktree with instructions"
 echo ""
-echo "Starting Claude session in worktree: $feature_path"
-echo "Claude will work on creating a PR with the following objective:"
-echo "$user_prompt"
+echo "=========================================="
+echo "Worktree ready at: $feature_path"
+echo "=========================================="
 echo ""
 
 # Navigate to the worktree and start Claude
@@ -103,17 +132,21 @@ cd "$feature_path"
 
 # Start Claude with the task instructions
 # Using claude CLI with allow all tools and the task as context
-echo "Running: claude --allow-all-tools --context TASK.md --context CLAUDE.md"
+echo "Starting Claude session with all tools enabled..."
 echo ""
 
 # Check if claude CLI is available
 if command -v claude &> /dev/null; then
+  # Start Claude with the task file as context
   claude --allow-all-tools --context TASK.md --context CLAUDE.md
 else
   echo "Warning: 'claude' CLI not found in PATH"
   echo "Please ensure Claude CLI is installed and available"
   echo ""
   echo "Worktree is ready at: $feature_path"
+  echo "Task file: TASK.md"
+  echo "Guidelines: CLAUDE.md"
+  echo ""
   echo "You can manually start Claude or open the directory in your preferred editor"
 fi
 
