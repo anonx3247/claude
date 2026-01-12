@@ -1,0 +1,121 @@
+#!/bin/bash
+
+# cft - Claude Feature Tool
+# Creates a git worktree with Claude integration for automated development
+
+set -e
+
+if [ -z "$1" ]; then
+  echo "Usage: cft <branch-name>"
+  echo "Example: cft fix-bug-123"
+  exit 1
+fi
+
+feature_name="$1"
+
+# Get project directory and name
+project_dir=$(git rev-parse --show-toplevel)
+project=$(basename "$project_dir")
+cd "$project_dir"
+
+# Define paths
+feature_path="../${project}-${feature_name}"
+prompt_file="/tmp/claude-prompt-${feature_name}.md"
+
+# Check if branch exists, create only if it doesn't
+if ! git show-ref --verify --quiet refs/heads/"$feature_name"; then
+  echo "Creating branch: $feature_name"
+  git branch "$feature_name"
+else
+  echo "Branch already exists: $feature_name"
+fi
+
+# Check if worktree exists, create only if it doesn't
+if [ ! -d "$feature_path" ]; then
+  echo "Creating worktree at: $feature_path"
+  git worktree add "$feature_path" "$feature_name"
+else
+  echo "Worktree already exists at: $feature_path"
+fi
+
+# Create a temporary file for the prompt
+echo "# Claude Instructions for: $feature_name" > "$prompt_file"
+echo "" >> "$prompt_file"
+echo "## Task Description" >> "$prompt_file"
+echo "# Write your instructions below. If left empty, Claude will infer the task from the branch name." >> "$prompt_file"
+echo "" >> "$prompt_file"
+echo "## Instructions" >> "$prompt_file"
+echo "" >> "$prompt_file"
+
+# Open editor for user to write prompt
+echo "Opening editor for instructions..."
+${EDITOR:-hx} "$prompt_file"
+
+# Read the prompt (skip header lines and extract actual content)
+user_prompt=$(sed -n '/^## Instructions/,${p}' "$prompt_file" | sed '1d' | sed '/^#/d' | sed '/^$/d')
+
+# If prompt is empty, use branch name as context
+if [ -z "$user_prompt" ]; then
+  user_prompt="Please work on the task indicated by the branch name: $feature_name. Explore the repository, understand the requirements, plan your approach, and implement a solution. Create a pull request when complete."
+fi
+
+# Copy CLAUDE.md to worktree if it exists
+if [ -f "$project_dir/CLAUDE.md" ]; then
+  cp "$project_dir/CLAUDE.md" "$feature_path/CLAUDE.md"
+  echo "Copied CLAUDE.md to worktree"
+fi
+
+# Create a task-specific CLAUDE.md with instructions
+cat > "$feature_path/TASK.md" << TASKEOF
+# Task: $feature_name
+
+## Objective
+Create a pull request to solve the following task.
+
+## Instructions
+$user_prompt
+
+## Workflow
+1. Explore the repository and understand the codebase
+2. Plan your approach
+3. Implement the solution following TDD practices
+4. Run tests and ensure everything passes
+5. Push your branch and create a pull request
+
+## Guidelines
+- Follow the conventions in CLAUDE.md
+- Write tests before implementation
+- Keep code simple and maintainable
+- Run linters and type checkers
+- Aim for 80%+ code coverage
+TASKEOF
+
+echo ""
+echo "Created TASK.md in worktree with instructions"
+echo ""
+echo "Starting Claude session in worktree: $feature_path"
+echo "Claude will work on creating a PR with the following objective:"
+echo "$user_prompt"
+echo ""
+
+# Navigate to the worktree and start Claude
+cd "$feature_path"
+
+# Start Claude with the task instructions
+# Using claude CLI with allow all tools and the task as context
+echo "Running: claude --allow-all-tools --context TASK.md --context CLAUDE.md"
+echo ""
+
+# Check if claude CLI is available
+if command -v claude &> /dev/null; then
+  claude --allow-all-tools --context TASK.md --context CLAUDE.md
+else
+  echo "Warning: 'claude' CLI not found in PATH"
+  echo "Please ensure Claude CLI is installed and available"
+  echo ""
+  echo "Worktree is ready at: $feature_path"
+  echo "You can manually start Claude or open the directory in your preferred editor"
+fi
+
+# Cleanup
+rm -f "$prompt_file"

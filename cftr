@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# cftr - Claude Feature Tool Remove
+# Removes a git worktree created by cft and optionally deletes the branch
+
+set -e
+
+if [ -z "$1" ]; then
+  echo "Usage: cftr <branch-name>"
+  echo "Example: cftr fix-bug-123"
+  exit 1
+fi
+
+feature_name="$1"
+
+# Get project directory and name
+project_dir=$(git rev-parse --show-toplevel)
+project=$(basename "$project_dir")
+cd "$project_dir"
+
+# Define paths
+feature_path="../${project}-${feature_name}"
+
+echo "Cleaning up Claude worktree for: $feature_name"
+echo ""
+
+# Check if worktree exists, remove only if it does
+if [ -d "$feature_path" ]; then
+  echo "Removing worktree at: $feature_path"
+  git worktree remove "$feature_path" --force
+  echo "✓ Worktree removed"
+else
+  echo "⚠ Worktree not found at: $feature_path"
+fi
+
+# Check if branch exists, ask user if they want to delete it
+if git show-ref --verify --quiet refs/heads/"$feature_name"; then
+  echo ""
+  echo "Branch '$feature_name' still exists."
+  read -p "Do you want to delete the branch? (y/N): " -n 1 -r
+  echo ""
+  
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    # Check if we're on the branch we're trying to delete
+    current_branch=$(git branch --show-current)
+    if [ "$current_branch" = "$feature_name" ]; then
+      echo "Switching to main branch first..."
+      git checkout main
+    fi
+    
+    # Check if branch has been merged
+    if git branch --merged main | grep -q "^[* ]*$feature_name$"; then
+      echo "Deleting merged branch: $feature_name"
+      git branch -d "$feature_name"
+      echo "✓ Branch deleted"
+    else
+      echo "Branch has unmerged changes."
+      read -p "Force delete anyway? (y/N): " -n 1 -r
+      echo ""
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        git branch -D "$feature_name"
+        echo "✓ Branch force-deleted"
+      else
+        echo "Branch kept: $feature_name"
+      fi
+    fi
+  else
+    echo "Branch kept: $feature_name"
+  fi
+else
+  echo "⚠ Branch not found: $feature_name"
+fi
+
+# Cleanup temporary files
+rm -f "/tmp/claude-prompt-${feature_name}.md"
+
+echo ""
+echo "Cleanup complete!"
