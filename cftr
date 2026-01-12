@@ -3,31 +3,82 @@
 # cftr - Claude Feature Tree Remove
 # Removes a git worktree and branch created by cft
 
-set -e
+set -euo pipefail
+
+# Colors for better output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Helper functions
+error() {
+  echo -e "${RED}✗ Error: $1${NC}" >&2
+  exit 1
+}
+
+success() {
+  echo -e "${GREEN}✓ $1${NC}"
+}
+
+warning() {
+  echo -e "${YELLOW}⚠  $1${NC}"
+}
+
+info() {
+  echo "ℹ  $1"
+}
 
 # Check if feature name is provided
-if [ -z "$1" ]; then
+if [ -z "${1:-}" ]; then
   echo "Usage: cftr <feature-name>"
-  echo "Example: cftr add-user-authentication"
+  echo ""
+  echo "Examples:"
+  echo "  cftr add-user-authentication"
+  echo "  cftr fix-bug-123"
   exit 1
 fi
 
-feature_name=$1
+feature_name="$1"
+
+# Verify we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  error "Not in a git repository. Please run this from within a git repository."
+fi
 
 # Get project directory and name
 project_dir=$(git rev-parse --show-toplevel)
 project=$(basename "$project_dir")
-cd "$project_dir"
+cd "$project_dir" || error "Failed to change to project directory"
 
 # Create worktree path
-feature_path="../$project-$feature_name"
+feature_path="../${project}-${feature_name}"
+
+# Track if anything was removed
+removed_something=false
 
 # Check if worktree exists, delete only if it does
 if [ -d "$feature_path" ]; then
-  git worktree remove "$feature_path" --force
-  echo "✓ Removed worktree: $feature_path"
+  # Verify it's actually a git worktree
+  if git worktree list | grep -q "$feature_path"; then
+    # Try to remove the worktree
+    if git worktree remove "$feature_path" --force 2>/dev/null; then
+      success "Removed worktree: $feature_path"
+      removed_something=true
+    else
+      # If that fails, try to remove it manually and prune
+      warning "Standard removal failed, trying force cleanup..."
+      rm -rf "$feature_path"
+      git worktree prune
+      success "Force removed worktree: $feature_path"
+      removed_something=true
+    fi
+  else
+    warning "Directory exists but is not a git worktree: $feature_path"
+    echo "Please remove it manually if needed: rm -rf $feature_path"
+  fi
 else
-  echo "✓ Worktree doesn't exist: $feature_path"
+  info "Worktree doesn't exist: $feature_path"
 fi
 
 # Check if branch exists, delete only if it does
@@ -35,17 +86,42 @@ if git show-ref --verify --quiet "refs/heads/$feature_name"; then
   # Check if we're currently on this branch
   current_branch=$(git branch --show-current)
   if [ "$current_branch" = "$feature_name" ]; then
-    echo "⚠ Currently on branch $feature_name, switching to main first"
-    git checkout main
+    info "Currently on branch $feature_name, switching to main first"
+    
+    # Try main, master, or any other branch
+    if git show-ref --verify --quiet refs/heads/main; then
+      git checkout main || error "Failed to switch to main branch"
+    elif git show-ref --verify --quiet refs/heads/master; then
+      git checkout master || error "Failed to switch to master branch"
+    else
+      # Find any other branch
+      other_branch=$(git branch | grep -v "^* $feature_name" | head -1 | sed 's/^[* ]*//')
+      if [ -n "$other_branch" ]; then
+        git checkout "$other_branch" || error "Failed to switch branches"
+      else
+        error "No other branches available to switch to"
+      fi
+    fi
   fi
   
-  git branch -D "$feature_name"
-  echo "✓ Removed branch: $feature_name"
+  # Try to delete the branch
+  if git branch -D "$feature_name" 2>/dev/null; then
+    success "Removed branch: $feature_name"
+    removed_something=true
+  else
+    error "Failed to remove branch: $feature_name"
+  fi
 else
-  echo "✓ Branch doesn't exist: $feature_name"
+  info "Branch doesn't exist: $feature_name"
 fi
 
 echo ""
-echo "=========================================="
-echo "✓ Cleanup complete!"
-echo "=========================================="
+if [ "$removed_something" = true ]; then
+  echo "=========================================="
+  success "Cleanup complete!"
+  echo "=========================================="
+else
+  echo "=========================================="
+  info "Nothing to clean up"
+  echo "=========================================="
+fi

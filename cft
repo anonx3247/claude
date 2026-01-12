@@ -3,50 +3,92 @@
 # cft - Claude Feature Tree
 # Creates a git worktree and starts a Claude session to work on a feature
 
-set -e
+set -euo pipefail
+
+# Colors for better output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Helper functions
+error() {
+  echo -e "${RED}✗ Error: $1${NC}" >&2
+  exit 1
+}
+
+success() {
+  echo -e "${GREEN}✓ $1${NC}"
+}
+
+warning() {
+  echo -e "${YELLOW}⚠  $1${NC}"
+}
+
+info() {
+  echo "ℹ  $1"
+}
 
 # Check if feature name is provided
-if [ -z "$1" ]; then
+if [ -z "${1:-}" ]; then
   echo "Usage: cft <feature-name> [--non-interactive \"prompt\"]"
-  echo "Example: cft add-user-authentication"
-  echo "         cft add-auth --non-interactive \"Add JWT authentication\""
+  echo ""
+  echo "Examples:"
+  echo "  cft add-user-authentication"
+  echo "  cft fix-bug-123"
+  echo "  cft add-auth --non-interactive \"Add JWT authentication\""
   exit 1
 fi
 
-feature_name=$1
+feature_name="$1"
 shift
+
+# Validate feature name (basic sanitization)
+if [[ ! "$feature_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  error "Feature name should only contain letters, numbers, hyphens, and underscores"
+fi
 
 # Check for non-interactive mode (for testing)
 non_interactive=false
 preset_prompt=""
-if [ "$1" = "--non-interactive" ]; then
+if [ "${1:-}" = "--non-interactive" ]; then
   non_interactive=true
   shift
-  preset_prompt="$@"
+  preset_prompt="$*"
+fi
+
+# Verify we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  error "Not in a git repository. Please run this from within a git repository."
 fi
 
 # Get project directory and name
 project_dir=$(git rev-parse --show-toplevel)
 project=$(basename "$project_dir")
-cd "$project_dir"
+cd "$project_dir" || error "Failed to change to project directory"
 
 # Create worktree path
-feature_path="../$project-$feature_name"
+feature_path="../${project}-${feature_name}"
+
+# Check if worktree path would conflict with existing directory
+if [ -e "$feature_path" ] && ! git worktree list | grep -q "$feature_path"; then
+  error "Path $feature_path exists but is not a git worktree. Please remove it first."
+fi
 
 # Check if branch exists, create only if it doesn't
 if ! git show-ref --verify --quiet "refs/heads/$feature_name"; then
-  git branch "$feature_name"
-  echo "✓ Created branch: $feature_name"
+  git branch "$feature_name" || error "Failed to create branch"
+  success "Created branch: $feature_name"
 else
-  echo "✓ Branch already exists: $feature_name"
+  info "Branch already exists: $feature_name"
 fi
 
 # Check if worktree exists, create only if it doesn't
 if [ ! -d "$feature_path" ]; then
-  git worktree add "$feature_path" "$feature_name"
-  echo "✓ Created worktree: $feature_path"
+  git worktree add "$feature_path" "$feature_name" || error "Failed to create worktree"
+  success "Created worktree: $feature_path"
 else
-  echo "✓ Worktree already exists: $feature_path"
+  info "Worktree already exists: $feature_path"
 fi
 
 # Get user prompt
@@ -55,52 +97,58 @@ user_prompt=""
 if [ "$non_interactive" = true ]; then
   # Non-interactive mode: use preset prompt
   user_prompt="$preset_prompt"
-  echo "✓ Using non-interactive mode"
+  success "Using non-interactive mode"
 else
   # Interactive mode: open editor
-  prompt_file=$(mktemp)
+  prompt_file=$(mktemp) || error "Failed to create temporary file"
   trap 'rm -f "$prompt_file"' EXIT
   
   # Add helpful comments to the prompt file
-  cat > "$prompt_file" << PROMPTEOF
+  cat > "$prompt_file" << 'PROMPTEOF'
 # Write your prompt for Claude below. Lines starting with # will be removed.
-# If left empty, Claude will determine the task from the branch name: $feature_name
+# If left empty, Claude will determine the task from the branch name.
 # Save and close the editor when done.
-
-# Branch: $feature_name
-# Worktree: $feature_path
 
 PROMPTEOF
 
-  # Open editor (try hx first, fall back to others)
-  if command -v hx &> /dev/null; then
-    hx "$prompt_file"
-  elif command -v helix &> /dev/null; then
-    helix "$prompt_file"
-  elif command -v nvim &> /dev/null; then
-    nvim "$prompt_file"
-  elif command -v vim &> /dev/null; then
-    vim "$prompt_file"
-  else
-    nano "$prompt_file"
+  echo "# Branch: $feature_name" >> "$prompt_file"
+  echo "# Worktree: $feature_path" >> "$prompt_file"
+  echo "" >> "$prompt_file"
+
+  # Find and use available editor
+  editor=""
+  for ed in "${EDITOR:-}" hx helix nvim vim vi nano; do
+    if [ -n "$ed" ] && command -v "$ed" &> /dev/null; then
+      editor="$ed"
+      break
+    fi
+  done
+
+  if [ -z "$editor" ]; then
+    error "No suitable editor found. Please set EDITOR environment variable or install one of: hx, helix, nvim, vim, nano"
   fi
 
-  # Read the prompt, removing comment lines
-  user_prompt=$(grep -v '^#' "$prompt_file" | sed '/^$/d' | tr '\n' ' ')
+  # Open editor
+  if ! "$editor" "$prompt_file"; then
+    error "Editor exited with error. Aborting."
+  fi
+
+  # Read the prompt, removing comment lines and empty lines
+  user_prompt=$(grep -v '^#' "$prompt_file" | sed '/^$/d' | tr '\n' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 fi
 
 # If prompt is empty, use branch name as guidance
 if [ -z "$user_prompt" ]; then
   user_prompt="Work on the feature: $feature_name. Analyze the codebase, plan the implementation, and create a pull request when complete."
-  echo "✓ Using default prompt based on branch name"
+  info "Using default prompt based on branch name"
 else
-  echo "✓ Using custom prompt"
+  success "Using custom prompt"
 fi
 
 # Copy CLAUDE.md to worktree if it exists in main repo
 if [ -f "$project_dir/CLAUDE.md" ]; then
-  cp "$project_dir/CLAUDE.md" "$feature_path/CLAUDE.md"
-  echo "✓ Copied CLAUDE.md to worktree"
+  cp "$project_dir/CLAUDE.md" "$feature_path/CLAUDE.md" || warning "Failed to copy CLAUDE.md"
+  success "Copied CLAUDE.md to worktree"
 fi
 
 # Create a task-specific prompt file in the worktree
@@ -129,7 +177,7 @@ Remember to:
 - Document any non-obvious decisions
 TASKEOF
 
-echo "✓ Created TASK.md with instructions"
+success "Created TASK.md with instructions"
 
 # Create the initial prompt for Claude
 initial_prompt="You are working in a git worktree for branch '$feature_name'.
@@ -147,56 +195,82 @@ After reading these files, follow the workflow described in TASK.md:
 Start by reading TASK.md and proceeding with the task."
 
 # Create a helper script that shows what will be run (useful for debugging)
-cat > "$feature_path/run-claude.sh" << RUNEOF
+# We'll write the prompt separately to avoid escaping issues
+cat > "$feature_path/run-claude.sh" << 'RUNEOF'
 #!/bin/bash
 
 # Helper script to (re)start Claude session
 # This shows the command that cft uses to invoke Claude
 
-cd "\$(dirname "\$0")"
+set -euo pipefail
+
+cd "$(dirname "$0")" || exit 1
 
 echo "Starting Claude session..."
-echo "Working directory: \$(pwd)"
-echo "Branch: \$(git branch --show-current)"
+echo "Working directory: $(pwd)"
+echo "Branch: $(git branch --show-current)"
 echo ""
 
-# The initial prompt
-cat << 'PROMPT_EOF'
-$initial_prompt
-PROMPT_EOF
+# The initial prompt is in a separate file
+if [ ! -f ".claude-prompt.txt" ]; then
+  echo "Error: .claude-prompt.txt not found"
+  exit 1
+fi
 
+initial_prompt=$(cat .claude-prompt.txt)
+
+echo "$initial_prompt"
 echo ""
 echo "---"
 echo ""
 
-# Try different Claude CLI invocations
-if command -v claude &> /dev/null; then
-  echo "Invoking Claude CLI..."
-  echo ""
-  
-  # Try to detect correct flags by checking help
-  if claude --help 2>&1 | grep -q "allow-all-tools"; then
-    echo "\$initial_prompt" | claude --allow-all-tools
-  elif claude --help 2>&1 | grep -q "\-allow"; then
-    echo "\$initial_prompt" | claude -allow all
-  else
-    # Fallback - try common patterns
-    echo "Using fallback invocation..."
-    echo "\$initial_prompt" | claude
-  fi
-else
+# Check if Claude CLI is available
+if ! command -v claude &> /dev/null; then
   echo "Error: 'claude' command not found in PATH"
   echo ""
-  echo "Please ensure Claude CLI is installed, then run this script again."
+  echo "Please ensure Claude CLI is installed and in your PATH."
+  echo "You can also manually invoke Claude with the prompt above."
   exit 1
 fi
+
+# Detect correct Claude CLI flags
+echo "Detecting Claude CLI capabilities..."
+claude_flags=""
+
+if claude --help 2>&1 | grep -q "\-\-allow-all-tools"; then
+  claude_flags="--allow-all-tools"
+  echo "Using: claude --allow-all-tools"
+elif claude --help 2>&1 | grep -qE "\-allow[[:space:]]"; then
+  claude_flags="-allow all"
+  echo "Using: claude -allow all"
+else
+  echo "Using: claude (basic invocation)"
+fi
+
+echo ""
+
+# Invoke Claude with the initial prompt
+if [ -n "$claude_flags" ]; then
+  # shellcheck disable=SC2086
+  echo "$initial_prompt" | claude $claude_flags
+else
+  echo "$initial_prompt" | claude
+fi
+
+echo ""
+echo "==========================================" 
+echo "✓ Claude session completed"
+echo "=========================================="
 RUNEOF
 
-chmod +x "$feature_path/run-claude.sh"
+# Save the prompt to a separate file to avoid escaping issues
+echo "$initial_prompt" > "$feature_path/.claude-prompt.txt"
+
+chmod +x "$feature_path/run-claude.sh" || warning "Failed to make run-claude.sh executable"
 
 echo ""
 echo "=========================================="
-echo "✓ Claude worktree setup complete!"
+success "Claude worktree setup complete!"
 echo "=========================================="
 echo ""
 echo "Worktree: $feature_path"
@@ -204,21 +278,18 @@ echo "Branch: $feature_name"
 echo ""
 
 # Try to start Claude automatically
-cd "$feature_path"
+cd "$feature_path" || error "Failed to change to worktree directory"
 
 if command -v claude &> /dev/null; then
-  echo "Starting Claude session with all tools enabled..."
+  info "Starting Claude session with all tools enabled..."
   echo ""
   
-  # Try to detect the correct Claude CLI flags
-  claude_invocation=""
-  if claude --help 2>&1 | grep -q "allow-all-tools"; then
+  # Detect the correct Claude CLI flags
+  claude_invocation="claude"
+  if claude --help 2>&1 | grep -q "\-\-allow-all-tools"; then
     claude_invocation="claude --allow-all-tools"
-  elif claude --help 2>&1 | grep -q "\-allow"; then
+  elif claude --help 2>&1 | grep -qE "\-allow[[:space:]]"; then
     claude_invocation="claude -allow all"
-  else
-    # Try common patterns
-    claude_invocation="claude"
   fi
   
   echo "Using: $claude_invocation"
@@ -227,15 +298,18 @@ if command -v claude &> /dev/null; then
   echo ""
   
   # Invoke Claude with the initial prompt
-  echo "$initial_prompt" | $claude_invocation
-  
-  echo ""
-  echo "=========================================="
-  echo "✓ Claude session completed"
-  echo "=========================================="
+  # shellcheck disable=SC2086
+  if echo "$initial_prompt" | $claude_invocation; then
+    echo ""
+    echo "=========================================="
+    success "Claude session completed"
+    echo "=========================================="
+  else
+    warning "Claude session ended with error"
+  fi
   echo ""
 else
-  echo "⚠  Warning: 'claude' command not found in PATH"
+  warning "Claude CLI not found in PATH"
   echo ""
   echo "Worktree is ready but Claude needs to be started manually."
   echo ""
