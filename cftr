@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# cftr - Claude Feature Tree Remove
+# Removes a git worktree and branch created by cft
+
+set -e
+
+# Check if feature name is provided
+if [ -z "$1" ]; then
+  echo "Usage: cftr <feature-name>"
+  echo "Example: cftr add-user-authentication"
+  exit 1
+fi
+
+feature_name=$1
+
+# Get project directory and name
+project_dir=$(git rev-parse --show-toplevel)
+project=$(basename "$project_dir")
+cd "$project_dir"
+
+# Create worktree path
+feature_path="../$project-$feature_name"
+
+# Check if worktree exists, delete only if it does
+if [ -d "$feature_path" ]; then
+  git worktree remove "$feature_path" --force
+  echo "✓ Removed worktree: $feature_path"
+else
+  echo "✓ Worktree doesn't exist: $feature_path"
+fi
+
+# Check if branch exists, delete only if it does
+if git show-ref --verify --quiet "refs/heads/$feature_name"; then
+  # Check if we're currently on this branch
+  current_branch=$(git branch --show-current)
+  if [ "$current_branch" = "$feature_name" ]; then
+    echo "⚠ Currently on branch $feature_name, switching to main first"
+    git checkout main
+  fi
+  
+  git branch -D "$feature_name"
+  echo "✓ Removed branch: $feature_name"
+else
+  echo "✓ Branch doesn't exist: $feature_name"
+fi
+
+echo ""
+echo "=========================================="
+echo "✓ Cleanup complete!"
+echo "=========================================="
