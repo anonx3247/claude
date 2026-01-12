@@ -18,7 +18,7 @@ Creates a git worktree and launches Claude AI to work on a feature branch autono
 
 **Usage:**
 ```bash
-./cft.sh <branch-name>
+cft <branch-name>
 ```
 
 **What it does:**
@@ -26,13 +26,13 @@ Creates a git worktree and launches Claude AI to work on a feature branch autono
 2. Creates a git worktree at `../<project>-<branch-name>`
 3. Opens your editor to write task instructions
 4. Copies the comprehensive `CLAUDE.md` template to the worktree
-5. Creates `PROJECT_TASK.md` with specific task details
-6. Launches Claude with all tools enabled (`-allow all`)
+5. Creates `TASK.md` with specific task details
+6. Launches Claude with all tools enabled
 7. Claude explores, plans, implements, tests, and creates a PR
 
 **Example:**
 ```bash
-./cft.sh add-user-authentication
+cft add-user-authentication
 # Opens editor for task details
 # Claude implements authentication
 # Creates a PR when complete
@@ -40,57 +40,57 @@ Creates a git worktree and launches Claude AI to work on a feature branch autono
 
 ### `cftr` - Claude Feature Task Remove
 
-Cleans up the worktree and branch created by `cft`.
+Cleans up the worktree and branch created by `cft` with interactive confirmations.
 
 **Usage:**
 ```bash
-./cftr.sh <branch-name>
+cftr <branch-name>
 ```
 
 **What it does:**
 1. Removes the git worktree at `../<project>-<branch-name>`
-2. Deletes the git branch
-3. Cleans up all associated files
+2. Interactively asks whether to delete the branch
+3. Checks if branch is merged before deletion
+4. Requires confirmation for force-deletion of unmerged branches
 
 **Example:**
 ```bash
-./cftr.sh add-user-authentication
-# Removes worktree and branch
+cftr add-user-authentication
+# Removes worktree
+# Asks: "Branch is merged. Delete it? (Y/n):"
 ```
 
 ## Installation
 
 ### Method 1: Shell Functions (Recommended)
 
-Add these functions to your `~/.zshrc` to use them like your existing `ft` and `ftr`:
+Add these functions to your `~/.zshrc` (or `~/.bashrc`) to use them like your existing `ft` and `ftr`:
 
 ```bash
+# Claude worktree functions
 cft() {
-  /path/to/cft.sh "$1"
+  ~/.local/bin/cft "$1"
 }
 
 cftr() {
-  /path/to/cftr.sh "$1"
+  ~/.local/bin/cftr "$1"
 }
 ```
 
-Or, if you clone this repo to a known location:
+First, copy the scripts to your local bin:
 
 ```bash
-# Add to ~/.zshrc
-export CLAUDE_SCRIPTS_PATH="$HOME/path/to/this/repo"
+# Create directory if it doesn't exist
+mkdir -p ~/.local/bin
 
-cft() {
-  "$CLAUDE_SCRIPTS_PATH/cft.sh" "$1"
-}
+# Copy scripts
+cp cft ~/.local/bin/cft
+cp cftr ~/.local/bin/cftr
 
-cftr() {
-  "$CLAUDE_SCRIPTS_PATH/cftr.sh" "$1"
-}
-```
+# Make executable
+chmod +x ~/.local/bin/cft ~/.local/bin/cftr
 
-Then reload your shell:
-```bash
+# Reload shell
 source ~/.zshrc
 ```
 
@@ -98,8 +98,8 @@ source ~/.zshrc
 
 ```bash
 # Copy scripts to a directory in your PATH
-sudo cp cft.sh /usr/local/bin/cft
-sudo cp cftr.sh /usr/local/bin/cftr
+sudo cp cft /usr/local/bin/cft
+sudo cp cftr /usr/local/bin/cftr
 sudo chmod +x /usr/local/bin/cft /usr/local/bin/cftr
 ```
 
@@ -107,9 +107,21 @@ sudo chmod +x /usr/local/bin/cft /usr/local/bin/cftr
 
 ```bash
 # Create symlinks from a directory in your PATH
-ln -s "$(pwd)/cft.sh" /usr/local/bin/cft
-ln -s "$(pwd)/cftr.sh" /usr/local/bin/cftr
-chmod +x cft.sh cftr.sh
+ln -s "$(pwd)/cft" /usr/local/bin/cft
+ln -s "$(pwd)/cftr" /usr/local/bin/cftr
+chmod +x cft cftr
+```
+
+### Verify Installation
+
+```bash
+# Check that functions/commands are available
+which cft   # Should show path to script
+which cftr  # Should show path to script
+
+# Or for functions:
+type cft    # Should output: cft is a shell function
+type cftr   # Should output: cftr is a shell function
 ```
 
 ## Requirements
@@ -141,6 +153,8 @@ Ensure the `claude` command is installed and in your PATH:
 which claude  # Should return the path to claude
 ```
 
+The scripts support both `--allow-all-tools` and `-allow all` flag formats for compatibility.
+
 ## Workflow Examples
 
 ### Example 1: Feature Development
@@ -166,6 +180,7 @@ cft add-dark-mode
 
 # Clean up when done
 cftr add-dark-mode
+# Prompts: "Branch is merged. Delete it? (Y/n):"
 ```
 
 ### Example 2: Bug Fix
@@ -228,13 +243,13 @@ project/                        # Original repo
 project-add-feature/            # Worktree created by cft
 ├── .git -> ../project/.git     # Linked to main repo
 ├── CLAUDE.md                   # Copied from main repo
-├── PROJECT_TASK.md             # Specific task instructions
+├── TASK.md                     # Specific task instructions
 └── (your files)                # Branch-specific files
 ```
 
-### Claude Process
+### Claude's Process
 
-1. **Read PROJECT_TASK.md** - Understands the specific task
+1. **Read TASK.md** - Understands the specific task
 2. **Read CLAUDE.md** - Learns project guidelines and best practices
 3. **Explore** - Examines the codebase structure
 4. **Plan** - Creates implementation strategy
@@ -278,40 +293,116 @@ cftr <branch>  # Clean up Claude worktree
 
 ### Claude command not found
 
-Check if Claude is installed and add to PATH if needed.
+Check if Claude is installed and add to PATH if needed:
+```bash
+which claude
+# If not found, install Claude CLI or add to PATH
+```
 
 ### Editor does not open
 
-Set EDITOR environment variable explicitly in your shell config.
+Set EDITOR environment variable explicitly:
+```bash
+export EDITOR=vim
+export EDITOR=hx
+```
 
 ### Permission denied
 
-Make scripts executable with `chmod +x cft.sh cftr.sh`
+Make scripts executable:
+```bash
+chmod +x cft cftr
+```
 
 ### Worktree already exists
 
-Clean up first with `cftr <branch-name>` or manually remove.
+Clean up first:
+```bash
+cftr <branch-name>
+# Or manually:
+git worktree remove ../project-branch-name --force
+git branch -D <branch-name>
+```
 
 ### Git ownership issues
 
-Add safe directory: `git config --global --add safe.directory /path/to/repo`
+Add safe directory:
+```bash
+git config --global --add safe.directory /path/to/repo
+```
+
+### Branch deletion not working
+
+The script will ask for confirmation:
+- For merged branches: "Branch is merged. Delete it? (Y/n):"
+- For unmerged: "Branch has unmerged changes. Force delete anyway? (y/N):"
+
+Just answer appropriately for your situation.
 
 ## Key Features
 
-### This Implementation vs Others
+### This Implementation
 
-1. **Uses PROJECT_TASK.md**: Separates task-specific instructions from general guidelines
-2. **Copies CLAUDE.md**: Uses the existing comprehensive template
-3. **Explicit -allow all**: Properly implements the required flag for Claude CLI
-4. **Better prompting**: Provides Claude with structured instructions
-5. **Clearer separation**: CLAUDE.md for guidelines, PROJECT_TASK.md for task
+✅ **Follows ft/ftr pattern** - Same workflow as existing tools
+✅ **No .sh extensions** - Clean command names
+✅ **Interactive cleanup** - Safe branch deletion with confirmations
+✅ **Editor flexibility** - Respects $EDITOR environment variable
+✅ **Smart task inference** - Can infer from branch name if left empty
+✅ **Comprehensive guidelines** - Uses existing CLAUDE.md template
+✅ **Multiple CLI formats** - Supports both --allow-all-tools and -allow all
+✅ **Proper error handling** - Clear messages and validation
+✅ **Trap cleanup** - Ensures temp files are always cleaned up
+
+## Advanced Tips
+
+### Skip Interactive Prompts
+
+For automation, you can modify cftr to skip prompts by setting an environment variable:
+
+```bash
+# Future enhancement - add to cftr:
+if [ "$CLAUDE_AUTO_DELETE" = "1" ]; then
+  # Skip prompts
+fi
+```
+
+### Custom TASK.md Templates
+
+Edit the TASK.md generation in `cft` to customize:
+- Workflow steps
+- Success criteria
+- Project-specific instructions
+
+### Parallel Development
+
+Work on multiple features simultaneously:
+
+```bash
+cft feature-a    # Claude works on feature A
+cft feature-b    # Claude works on feature B in parallel
+ft my-feature    # You work on your feature manually
+
+# Three parallel worktrees:
+# ../project-feature-a
+# ../project-feature-b  
+# ../project-my-feature
+```
 
 ## Files
 
-- `cft.sh` - Main script to create Claude worktree session
-- `cftr.sh` - Cleanup script to remove worktree and branch
-- `README.md` - This documentation
-- `CLAUDE.md` - Comprehensive development guidelines (already in repo)
+- `cft` - Main script to create Claude worktree session
+- `cftr` - Cleanup script to remove worktree and branch
+- `README.md` - This comprehensive documentation
+- `CLAUDE.md` - Development guidelines (already in repo)
+
+## Contributing
+
+Improvements welcome! Key areas:
+- Support for different Claude CLI versions
+- Better error handling for edge cases
+- Integration with other editors
+- Custom template support
+- Non-interactive mode for CI/CD
 
 ## License
 

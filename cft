@@ -46,8 +46,9 @@ fi
 # Determine editor to use
 editor=${EDITOR:-hx}
 
-# Create temporary file for prompt
+# Create temporary file for prompt with cleanup trap
 prompt_file=$(mktemp /tmp/claude-prompt.XXXXXX)
+trap 'rm -f "$prompt_file"' EXIT
 
 # Create prompt template
 cat > "$prompt_file" << 'TEMPLATE_EOF'
@@ -84,9 +85,6 @@ fi
 # Read and clean the prompt
 prompt=$(grep -v '^#' "$prompt_file" | grep -v '^\s*$' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-# Clean up temp file
-rm -f "$prompt_file"
-
 # Determine the task description
 if [ -z "$prompt" ]; then
   echo "No specific instructions provided."
@@ -103,12 +101,9 @@ if [ -f "$project_dir/CLAUDE.md" ]; then
   echo "Copied CLAUDE.md template to worktree"
 fi
 
-# Create or append the PROJECT_TASK.md with specific instructions
-cat > "$feature_path/PROJECT_TASK.md" << TASK_EOF
-# Project Task
-
-## Branch
-\`$feature_name\`
+# Create TASK.md with specific instructions (using TASK.md instead of PROJECT_TASK.md for simplicity)
+cat > "$feature_path/TASK.md" << TASK_EOF
+# Task: $feature_name
 
 ## Objective
 Create a pull request for this feature/fix after exploring, planning, implementing, and testing.
@@ -148,7 +143,7 @@ You have full access to:
 
 TASK_EOF
 
-echo "Created PROJECT_TASK.md with task details"
+echo "Created TASK.md with task details"
 echo ""
 echo "=========================================="
 echo "Worktree ready at: $feature_path"
@@ -161,11 +156,11 @@ if ! command -v claude &> /dev/null; then
   echo ""
   echo "Worktree has been set up with:"
   echo "  - CLAUDE.md (comprehensive guidelines)"
-  echo "  - PROJECT_TASK.md (specific task instructions)"
+  echo "  - TASK.md (specific task instructions)"
   echo ""
   echo "To start Claude manually:"
   echo "  cd $feature_path"
-  echo "  claude -allow all"
+  echo "  claude --allow-all-tools    # or: claude -allow all"
   exit 0
 fi
 
@@ -179,15 +174,23 @@ cd "$feature_path"
 initial_prompt="You are working in a git worktree for branch '$feature_name'.
 
 Read the following files to understand your task and guidelines:
-1. PROJECT_TASK.md - Your specific task and objectives
+1. TASK.md - Your specific task and objectives
 2. CLAUDE.md - Development guidelines and best practices for this project
 
-After reading these files, execute the workflow described in PROJECT_TASK.md to complete the task and create a pull request.
+After reading these files, execute the workflow described in TASK.md to complete the task and create a pull request.
 
 Start by reading both files to understand what needs to be done."
 
-# Start Claude with all tools enabled
-echo "$initial_prompt" | claude -allow all
+# Start Claude - try multiple flag formats for compatibility
+echo "$initial_prompt" | claude --allow-all-tools 2>/dev/null || \
+  echo "$initial_prompt" | claude -allow all 2>/dev/null || \
+  {
+    echo "Note: Could not start Claude with standard flags."
+    echo "Try manually: cd $feature_path && claude --allow-all-tools"
+    echo ""
+    echo "Or with TASK.md as context if your Claude CLI supports it:"
+    echo "  claude --context TASK.md --context CLAUDE.md"
+  }
 
 echo ""
 echo "=========================================="

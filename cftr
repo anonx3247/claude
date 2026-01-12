@@ -63,9 +63,9 @@ fi
 
 echo ""
 
-# Check if branch exists, delete only if it does
+# Check if branch exists
 if git show-ref --verify --quiet refs/heads/"$feature_name"; then
-  echo "Deleting branch: $feature_name"
+  echo "Branch '$feature_name' exists."
   
   # Check if we're currently on that branch
   current_branch=$(git branch --show-current)
@@ -78,12 +78,37 @@ if git show-ref --verify --quiet refs/heads/"$feature_name"; then
     }
   fi
   
-  if git branch -D "$feature_name" 2>/dev/null; then
-    echo "✓ Branch deleted"
-    cleaned_branch=true
+  # Check if branch has been merged
+  if git branch --merged main 2>/dev/null | grep -q "^[* ]*$feature_name$" || \
+     git branch --merged master 2>/dev/null | grep -q "^[* ]*$feature_name$"; then
+    # Branch is merged, ask to delete
+    read -p "Branch is merged. Delete it? (Y/n): " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+      git branch -d "$feature_name" 2>/dev/null && {
+        echo "✓ Branch deleted"
+        cleaned_branch=true
+      } || {
+        echo "⚠ Could not delete branch"
+      }
+    else
+      echo "Branch kept: $feature_name"
+    fi
   else
-    echo "⚠ Could not delete branch $feature_name"
-    echo "  It may be protected or have unmerged changes"
+    # Branch has unmerged changes
+    echo "⚠ Branch has unmerged changes"
+    read -p "Force delete anyway? (y/N): " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      git branch -D "$feature_name" 2>/dev/null && {
+        echo "✓ Branch force-deleted"
+        cleaned_branch=true
+      } || {
+        echo "⚠ Could not delete branch"
+      }
+    else
+      echo "Branch kept: $feature_name"
+    fi
   fi
 else
   echo "Branch not found (already deleted or never created)"
