@@ -6,15 +6,47 @@
 
 set -e
 
-if [ -z "$1" ]; then
-  echo "Usage: cft <branch-name>"
+# Parse arguments for non-interactive mode
+non_interactive=false
+preset_prompt=""
+
+if [ "$1" = "--non-interactive" ] || [ "$1" = "-n" ]; then
+  non_interactive=true
+  shift
+  feature_name="$1"
+  shift
+  preset_prompt="$*"
+elif [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+  echo "Usage: cft <branch-name> [options]"
+  echo "       cft --non-interactive|-n <branch-name> <task-description>"
   echo ""
   echo "Creates a git worktree for the branch and starts a Claude AI session."
   echo "Claude will work on the feature autonomously and create a PR."
+  echo ""
+  echo "Options:"
+  echo "  --non-interactive, -n   Skip editor, use provided task description"
+  echo "  --help, -h              Show this help message"
+  echo ""
+  echo "Examples:"
+  echo "  cft add-authentication"
+  echo "  cft -n fix-bug \"Fix memory leak in component\""
+  exit 0
+elif [ -z "$1" ]; then
+  echo "Usage: cft <branch-name>"
+  echo "       cft --non-interactive|-n <branch-name> <task-description>"
+  echo ""
+  echo "Run 'cft --help' for more information"
   exit 1
+else
+  feature_name="$1"
 fi
 
-feature_name=$1
+# Validate feature name
+if [[ ! "$feature_name" =~ ^[a-zA-Z0-9_/-]+$ ]]; then
+  echo "Error: Invalid branch name '$feature_name'"
+  echo "Branch names must contain only letters, numbers, underscores, hyphens, and forward slashes"
+  exit 1
+fi
 
 # Validate we're in a git repository
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -43,15 +75,41 @@ else
   echo "Worktree already exists at: $feature_path"
 fi
 
-# Determine editor to use
-editor=${EDITOR:-hx}
+# Determine editor to use with better fallback
+editor=""
+if [ "$non_interactive" = false ]; then
+  for ed in "${EDITOR:-}" hx helix nvim vim vi nano; do
+    if [ -n "$ed" ] && command -v "$ed" &> /dev/null; then
+      editor="$ed"
+      break
+    fi
+  done
+
+  if [ -z "$editor" ]; then
+    echo "Warning: No suitable editor found. Install one of: hx, vim, nano"
+    echo "Falling back to inferring task from branch name"
+    non_interactive=true
+  fi
+fi
 
 # Create temporary file for prompt with cleanup trap
 prompt_file=$(mktemp /tmp/claude-prompt.XXXXXX)
 trap 'rm -f "$prompt_file"' EXIT
 
-# Create prompt template
-cat > "$prompt_file" << 'TEMPLATE_EOF'
+task_description=""
+
+if [ "$non_interactive" = true ]; then
+  if [ -n "$preset_prompt" ]; then
+    echo "Using provided task description"
+    task_description="$preset_prompt"
+  else
+    echo "No specific instructions provided."
+    echo "Claude will infer the task from branch name: $feature_name"
+    task_description="Based on the branch name '$feature_name', determine what needs to be done and implement it."
+  fi
+else
+  # Create prompt template
+  cat > "$prompt_file" << 'TEMPLATE_EOF'
 # Claude Task Instructions
 # 
 # Branch: BRANCH_NAME_PLACEHOLDER
@@ -69,30 +127,31 @@ cat > "$prompt_file" << 'TEMPLATE_EOF'
 
 TEMPLATE_EOF
 
-# Replace placeholder with actual branch name
-sed -i "s/BRANCH_NAME_PLACEHOLDER/$feature_name/" "$prompt_file"
+  # Replace placeholder with actual branch name
+  sed -i "s/BRANCH_NAME_PLACEHOLDER/$feature_name/" "$prompt_file"
 
-# Open editor for user input
-echo ""
-echo "Opening $editor to write task instructions..."
-echo "Save and close when done."
-echo ""
+  # Open editor for user input
+  echo ""
+  echo "Opening $editor to write task instructions..."
+  echo "Save and close when done."
+  echo ""
 
-if ! $editor "$prompt_file" 2>/dev/null; then
-  echo "Warning: Editor exited with non-zero status"
-fi
+  if ! $editor "$prompt_file" 2>/dev/null; then
+    echo "Warning: Editor exited with non-zero status"
+  fi
 
-# Read and clean the prompt
-prompt=$(grep -v '^#' "$prompt_file" | grep -v '^\s*$' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  # Read and clean the prompt
+  prompt=$(grep -v '^#' "$prompt_file" | grep -v '^\s*$' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-# Determine the task description
-if [ -z "$prompt" ]; then
-  echo "No specific instructions provided."
-  echo "Claude will infer the task from branch name: $feature_name"
-  task_description="Based on the branch name '$feature_name', determine what needs to be done and implement it."
-else
-  echo "Task instructions captured."
-  task_description="$prompt"
+  # Determine the task description
+  if [ -z "$prompt" ]; then
+    echo "No specific instructions provided."
+    echo "Claude will infer the task from branch name: $feature_name"
+    task_description="Based on the branch name '$feature_name', determine what needs to be done and implement it."
+  else
+    echo "Task instructions captured."
+    task_description="$prompt"
+  fi
 fi
 
 # Copy the comprehensive CLAUDE.md template to worktree if it exists
@@ -101,7 +160,7 @@ if [ -f "$project_dir/CLAUDE.md" ]; then
   echo "Copied CLAUDE.md template to worktree"
 fi
 
-# Create TASK.md with specific instructions (using TASK.md instead of PROJECT_TASK.md for simplicity)
+# Create TASK.md with specific instructions
 cat > "$feature_path/TASK.md" << TASK_EOF
 # Task: $feature_name
 
