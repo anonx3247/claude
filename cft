@@ -59,6 +59,7 @@ if [ "$non_interactive" = true ]; then
 else
   # Interactive mode: open editor
   prompt_file=$(mktemp)
+  trap 'rm -f "$prompt_file"' EXIT
   
   # Add helpful comments to the prompt file
   cat > "$prompt_file" << PROMPTEOF
@@ -86,7 +87,6 @@ PROMPTEOF
 
   # Read the prompt, removing comment lines
   user_prompt=$(grep -v '^#' "$prompt_file" | sed '/^$/d' | tr '\n' ' ')
-  rm -f "$prompt_file"
 fi
 
 # If prompt is empty, use branch name as guidance
@@ -131,25 +131,65 @@ TASKEOF
 
 echo "✓ Created TASK.md with instructions"
 
-# Create a simple runner script
-cat > "$feature_path/run-claude.sh" << 'RUNEOF'
+# Create the initial prompt for Claude
+initial_prompt="You are working in a git worktree for branch '$feature_name'.
+
+Please read the following files to understand your task and guidelines:
+1. TASK.md - Your specific task and objectives
+2. CLAUDE.md - Development guidelines and best practices (if it exists)
+
+After reading these files, follow the workflow described in TASK.md:
+- Explore the codebase
+- Plan your approach
+- Implement with tests
+- Create a pull request
+
+Start by reading TASK.md and proceeding with the task."
+
+# Create a helper script that shows what will be run (useful for debugging)
+cat > "$feature_path/run-claude.sh" << RUNEOF
 #!/bin/bash
 
-# This script would run Claude with the appropriate settings
-# For now, it shows what would be run
+# Helper script to (re)start Claude session
+# This shows the command that cft uses to invoke Claude
+
+cd "\$(dirname "\$0")"
 
 echo "Starting Claude session..."
-echo "Working directory: $(pwd)"
-echo "Branch: $(git branch --show-current)"
+echo "Working directory: \$(pwd)"
+echo "Branch: \$(git branch --show-current)"
 echo ""
-echo "Task description in TASK.md:"
-cat TASK.md
+
+# The initial prompt
+cat << 'PROMPT_EOF'
+$initial_prompt
+PROMPT_EOF
+
 echo ""
-echo "Claude would be run with:"
-echo "  claude --allow-all-tools"
-echo "  Objective: Create a PR for this feature"
+echo "---"
 echo ""
-echo "Note: Actual Claude invocation depends on your Claude CLI setup"
+
+# Try different Claude CLI invocations
+if command -v claude &> /dev/null; then
+  echo "Invoking Claude CLI..."
+  echo ""
+  
+  # Try to detect correct flags by checking help
+  if claude --help 2>&1 | grep -q "allow-all-tools"; then
+    echo "\$initial_prompt" | claude --allow-all-tools
+  elif claude --help 2>&1 | grep -q "\-allow"; then
+    echo "\$initial_prompt" | claude -allow all
+  else
+    # Fallback - try common patterns
+    echo "Using fallback invocation..."
+    echo "\$initial_prompt" | claude
+  fi
+else
+  echo "Error: 'claude' command not found in PATH"
+  echo ""
+  echo "Please ensure Claude CLI is installed, then run this script again."
+  exit 1
+fi
 RUNEOF
 
 chmod +x "$feature_path/run-claude.sh"
@@ -162,10 +202,51 @@ echo ""
 echo "Worktree: $feature_path"
 echo "Branch: $feature_name"
 echo ""
-echo "Next steps:"
-echo "  cd $feature_path"
-echo "  cat TASK.md           # Review the task"
-echo "  ./run-claude.sh       # Start Claude session"
+
+# Try to start Claude automatically
+cd "$feature_path"
+
+if command -v claude &> /dev/null; then
+  echo "Starting Claude session with all tools enabled..."
+  echo ""
+  
+  # Try to detect the correct Claude CLI flags
+  claude_invocation=""
+  if claude --help 2>&1 | grep -q "allow-all-tools"; then
+    claude_invocation="claude --allow-all-tools"
+  elif claude --help 2>&1 | grep -q "\-allow"; then
+    claude_invocation="claude -allow all"
+  else
+    # Try common patterns
+    claude_invocation="claude"
+  fi
+  
+  echo "Using: $claude_invocation"
+  echo ""
+  echo "---"
+  echo ""
+  
+  # Invoke Claude with the initial prompt
+  echo "$initial_prompt" | $claude_invocation
+  
+  echo ""
+  echo "=========================================="
+  echo "✓ Claude session completed"
+  echo "=========================================="
+  echo ""
+else
+  echo "⚠  Warning: 'claude' command not found in PATH"
+  echo ""
+  echo "Worktree is ready but Claude needs to be started manually."
+  echo ""
+  echo "Options:"
+  echo "  1. Install Claude CLI and run: ./run-claude.sh"
+  echo "  2. Open the worktree in your preferred editor"
+  echo "  3. Use a different Claude interface"
+  echo ""
+fi
+
+echo "Worktree remains at: $feature_path"
 echo ""
 echo "To clean up later:"
 echo "  cftr $feature_name"

@@ -6,7 +6,7 @@ Shell scripts to automate setting up Claude sessions in git worktrees for autono
 
 These scripts extend your existing `ft` and `ftr` functions to work with Claude, automating the setup of isolated development environments where Claude can work on features autonomously.
 
-**`cft`** (Claude Feature Tree) - Creates a git worktree and prepares a Claude session
+**`cft`** (Claude Feature Tree) - Creates a git worktree and starts a Claude session
 **`cftr`** (Claude Feature Tree Remove) - Cleans up the worktree and branch
 
 ## Features
@@ -14,9 +14,11 @@ These scripts extend your existing `ft` and `ftr` functions to work with Claude,
 - 🌳 Creates isolated git worktrees for feature development
 - 📝 Interactive prompt creation with your preferred editor
 - 📋 Generates task-specific instructions for Claude
-- 🤖 Sets up Claude to work autonomously with all tools enabled
+- 🤖 **Automatically starts Claude** with all tools enabled
 - 🎯 Aims to create a PR for your review
+- 🔧 Creates helper script for restarting Claude sessions
 - 🧹 Easy cleanup with `cftr`
+- ✅ Comprehensive test suite included
 
 ## Installation
 
@@ -50,6 +52,14 @@ which cft
 which cftr
 ```
 
+## Prerequisites
+
+- **Git** with worktree support
+- **Text editor** (hx, helix, nvim, vim, or nano)
+- **Claude CLI** (optional but recommended) - For automatic Claude invocation
+
+If Claude CLI is not installed, `cft` will still prepare the worktree and create a helper script you can run manually when Claude is available.
+
 ## Usage
 
 ### Creating a Claude Feature Session
@@ -65,7 +75,8 @@ This will:
 3. Open your editor to write instructions for Claude
 4. Copy `CLAUDE.md` to the worktree (if it exists)
 5. Create a `TASK.md` file with your instructions
-6. Set up a `run-claude.sh` script to start the Claude session
+6. Create a `run-claude.sh` helper script
+7. **Automatically start Claude** with all tools enabled
 
 ### Writing the Prompt
 
@@ -86,15 +97,42 @@ Implement user authentication with the following requirements:
 - Be specific about requirements and constraints
 - Mention any existing patterns to follow
 
-### Starting the Claude Session
+### What Claude Does
+
+Once started, Claude will:
+1. Read `TASK.md` and `CLAUDE.md` to understand the task
+2. Explore the codebase to understand the context
+3. Plan the implementation approach
+4. Write tests following TDD practices
+5. Implement the feature
+6. Run linters and type checkers
+7. Create a pull request for your review
+
+### If Claude Isn't Found
+
+If Claude CLI isn't installed or found in PATH, `cft` will:
+- Still set up the worktree with all necessary files
+- Display a helpful message with options
+- Create `run-claude.sh` that you can use later
+
+You can then:
+1. Install Claude CLI and run `./run-claude.sh` in the worktree
+2. Open the worktree in your preferred editor
+3. Use a different Claude interface
+
+### Restarting a Claude Session
+
+If Claude's session ends or you want to restart it:
 
 ```bash
 cd ../<project>-feature-name
-cat TASK.md              # Review the task
-./run-claude.sh          # Start Claude
+./run-claude.sh
 ```
 
-**Note:** The actual Claude invocation depends on your Claude CLI setup. You may need to modify `run-claude.sh` to match your environment.
+The `run-claude.sh` script:
+- Shows the initial prompt used
+- Detects the correct Claude CLI flags automatically
+- Can be customized for your specific Claude setup
 
 ### Cleaning Up
 
@@ -118,27 +156,21 @@ $ cft add-user-auth
 # Editor opens, you write:
 # "Implement JWT-based authentication with login/logout endpoints"
 
-# 2. Navigate to the worktree
-$ cd ../myproject-add-user-auth
+# 2. Claude starts automatically and works on the task
+# - Explores codebase
+# - Plans implementation
+# - Writes tests
+# - Implements feature
+# - Creates PR
 
-# 3. Review the task
-$ cat TASK.md
-
-# 4. Start Claude session
-$ ./run-claude.sh
-# (or your actual Claude CLI command)
-
-# 5. Claude works autonomously:
-#    - Explores codebase
-#    - Plans implementation
-#    - Writes tests
-#    - Implements feature
-#    - Creates PR
-
-# 6. Review the PR
+# 3. Review the PR
 # (on GitHub/GitLab/etc.)
 
-# 7. Clean up
+# 4. If you need to restart Claude or make changes
+$ cd ../myproject-add-user-auth
+$ ./run-claude.sh
+
+# 5. Clean up when done
 $ cd ../myproject
 $ cftr add-user-auth
 ```
@@ -165,7 +197,7 @@ parent-directory/
 └── myproject-feature-name/   # Worktree
     ├── CLAUDE.md             # Copy of guidelines
     ├── TASK.md               # Task-specific instructions
-    ├── run-claude.sh         # Claude launcher script
+    ├── run-claude.sh         # Claude restart helper
     └── ...                   # All your project files
 ```
 
@@ -188,22 +220,60 @@ export EDITOR=vim
 
 ### Customizing Claude Invocation
 
-Edit the `run-claude.sh` file that gets created in each worktree to customize how Claude is invoked:
+The script automatically detects the correct Claude CLI flags by checking `claude --help`. It tries:
+1. `claude --allow-all-tools` (if supported)
+2. `claude -allow all` (fallback)
+3. `claude` (basic invocation)
+
+You can customize `run-claude.sh` in each worktree for specific needs:
 
 ```bash
 #!/bin/bash
-# Example: Use your actual Claude CLI
-claude-cli run \
-  --allow-all-tools \
-  --context="$(cat CLAUDE.md TASK.md)" \
-  --objective="Create a PR for this feature"
+# Example: Use specific Claude CLI options
+claude --allow-all-tools \
+  --model claude-3-opus \
+  --max-tokens 4096
 ```
 
-## Requirements
+### Non-Interactive Mode (for Testing/Automation)
 
-- Git (with worktree support)
-- A text editor (hx, nvim, vim, or nano)
-- Claude CLI (for actually running Claude)
+```bash
+cft feature-name --non-interactive "Your task description here"
+```
+
+This skips the editor and uses the provided task description directly. Useful for:
+- Automated testing
+- CI/CD pipelines
+- Scripting workflows
+
+## Testing
+
+The repository includes comprehensive tests:
+
+### Basic Tests
+
+```bash
+./test-scripts.sh
+```
+
+Tests:
+- Script existence and executability
+- Usage message display
+- Bash syntax validation
+- Essential command presence
+
+### Integration Tests
+
+```bash
+./integration-test.sh
+```
+
+Tests:
+- Full workflow (create → verify → cleanup)
+- Worktree and branch creation
+- File generation (TASK.md, run-claude.sh, CLAUDE.md)
+- Proper cleanup
+- Non-interactive mode
 
 ## Troubleshooting
 
@@ -229,6 +299,16 @@ export EDITOR=nano
 cft feature-name
 ```
 
+### Claude CLI not found
+
+If you see "Warning: 'claude' command not found":
+
+1. **Install Claude CLI** following your platform's instructions
+2. **Verify installation**: `which claude`
+3. **Manually run**: `cd ../project-feature && ./run-claude.sh`
+
+The worktree is still set up correctly; you just need to start Claude manually.
+
 ### Git worktree errors
 
 Make sure you're in a git repository:
@@ -236,6 +316,14 @@ Make sure you're in a git repository:
 ```bash
 git status
 ```
+
+### Claude flags don't work
+
+The script tries to auto-detect the correct flags. If that fails:
+
+1. Check `claude --help` for supported flags
+2. Edit `run-claude.sh` in your worktree
+3. Update the Claude invocation manually
 
 ## Comparison with `ft` and `ftr`
 
@@ -246,18 +334,68 @@ git status
 | Opens editor | Zed editor | Prompt editor |
 | Generates tasks | ❌ | ✅ (TASK.md) |
 | Copies CLAUDE.md | ❌ | ✅ |
-| Claude setup | ❌ | ✅ (run-claude.sh) |
+| Claude setup | ❌ | ✅ (automatic) |
+| Helper scripts | ❌ | ✅ (run-claude.sh) |
+| Test suite | ❌ | ✅ |
 | Cleanup | ✅ | ✅ |
+
+## Advanced Usage
+
+### Combining with Other Tools
+
+```bash
+# Use with your existing aliases
+cft my-feature
+cd ../project-my-feature
+# Claude works...
+# After Claude creates commits:
+gp  # Your alias for 'git push'
+```
+
+### Pre-commit Hooks
+
+Add `cft` to your development workflow:
+
+```bash
+# .git/hooks/pre-push
+#!/bin/bash
+# Automatically test before pushing
+if [ -f "test-scripts.sh" ]; then
+  ./test-scripts.sh
+fi
+```
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/claude-test.yml
+name: Test Claude Scripts
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run tests
+        run: |
+          ./test-scripts.sh
+          ./integration-test.sh
+```
 
 ## Contributing
 
-Feel free to customize these scripts for your workflow. Some ideas:
+Ideas for enhancements:
 
 - Add support for different Claude CLI tools
-- Integrate with your CI/CD pipeline
+- Integrate with CI/CD pipelines
 - Add template support for different project types
 - Create hooks for pre/post Claude sessions
+- Add progress indicators for long-running tasks
 
 ## License
 
 MIT License - Feel free to use and modify as needed.
+
+## Credits
+
+Built to extend the `ft`/`ftr` workflow pattern with AI-powered autonomous development.
